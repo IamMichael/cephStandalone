@@ -1,0 +1,2 @@
+# cephStandalone
+ceph standalone playbook
