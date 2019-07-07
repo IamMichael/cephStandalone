@@ -1,0 +1,29 @@
+- hosts: g-ceph-client
+  tasks:
+    - name: "Stop Ceph Client"
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+      with_items:
+        - "ceph-fuse"
+      ignore_errors: true
+
+
+    - name: "Remove Ceph Client RPM"
+      yum:
+        name: "{{ item }}"
+        state: absent
+      with_items:
+        - ceph-fuse
+      ignore_errors: true
+
+
+    - name: "Remove Ceph Config File" 
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "/etc/ceph"
+      ignore_errors: true
+
+

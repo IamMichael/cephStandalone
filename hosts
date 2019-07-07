@@ -1,0 +1,16 @@
+h-ceph-node01    ansible_ssh_host=192.168.1.103  ansible_ssh_pass='123456' ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+h-ceph-client01  ansible_ssh_host=192.168.1.105  ansible_ssh_pass='123456' ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[g-ceph-server]
+h-ceph-node01
+
+[g-ceph-client]
+h-ceph-client01
+
+[g-ceph-client-init]
+h-ceph-client01
+
+
+
+

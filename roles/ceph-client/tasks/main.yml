@@ -1,0 +1,65 @@
+---
+- name: "Install Ceph Client RPM"
+  yum:
+    name: "{{ item }}"
+    enablerepo: ceph
+    disablerepo: "*"
+    state: present
+  with_items:
+    - ceph-fuse
+
+
+- name: "Set Selinux Mode"
+  selinux:
+    policy: targeted
+    state: permissive
+
+
+- name: "Create Ceph Client Folder"
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0750
+  with_items:
+    - /etc/ceph
+
+  
+- name: "Copy Ceph Config File"
+  template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: 0600
+  with_items:
+    - { src: 'ceph.conf', dest: '/etc/ceph' }
+    - { src: 'ceph-fuse.service', dest: '/etc/systemd/system' }
+
+
+- name: "Copy Ceph Key File"
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: 0600
+  with_items:
+    - { src: 'ceph.client.admin.keyring', dest: '/etc/ceph' }
+
+
+- name: "Init Ceph Mount Folder"
+  shell: >
+    mkdir -p /opt/tmp &&
+    ceph-fuse /opt/tmp &&
+    mkdir /opt/tmp/ceph &&
+    umount /opt/tmp &&
+    rm -rf /opt/tmp 
+  when: "'g-ceph-client-init' in group_names" 
+
+
+- name: "Start Ceph Client"
+  systemd:
+    name: "{{ item }}"
+    state: started
+    daemon_reload: yes
+    enabled: yes
+  with_items:
+    - ceph-fuse
+    - ceph-fuse.target
+

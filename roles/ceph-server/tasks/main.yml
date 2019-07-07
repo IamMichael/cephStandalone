@@ -1,0 +1,150 @@
+---
+
+- name: "Install Ceph RPM"
+  yum:
+    name: "{{ item }}"
+    enablerepo: ceph
+    disablerepo: "*"
+    state: present
+  with_items:
+    - ceph
+    - ceph-base
+    - ceph-common
+    - ceph-mon
+    - ceph-mgr
+    - ceph-osd
+    - ceph-mds
+
+- name: "Set Selinux Mode"
+  selinux:
+    policy: targeted
+    state: permissive
+
+
+- name: "Start Firewalld"
+  systemd:
+    name: "firewalld"
+    state: started
+    daemon_reload: yes
+    enabled: yes
+
+
+- name: "Set Ceph Firewalld"
+  firewalld:
+    zone: public
+    port: "{{ item }}"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  with_items:
+    - "6789/tcp"
+    - "6800-7300/tcp"
+
+- name: "Create Ceph Folder"
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: ceph
+    group: ceph
+    mode: 0750
+  with_items:
+    - /etc/ceph
+    - /var/lib/ceph
+    - /var/lib/ceph/mon
+    - /var/lib/ceph/mgr
+    - /var/lib/ceph/osd
+    - /var/lib/ceph/mds
+    - /var/lib/ceph/bootstrap-mon
+    - /var/lib/ceph/bootstrap-mgr
+    - /var/lib/ceph/bootstrap-osd
+    - /var/lib/ceph/bootstrap-mds
+    - "/var/lib/ceph/mon/ceph-{{ ceph_node_id }}"
+    - "/var/lib/ceph/mgr/ceph-{{ ceph_node_id }}"
+    - "/var/lib/ceph/osd/ceph-{{ ceph_node_id }}"
+    - "/var/lib/ceph/mds/ceph-{{ ceph_node_id }}"
+  
+- name: "Copy Ceph Config File"
+  template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: ceph
+    group: ceph 
+    mode: 0600
+  with_items:
+    - { src: 'ceph.conf', dest: '/etc/ceph' }
+
+- name: "Copy Ceph Key File"
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: ceph
+    group: ceph
+    mode: 0600
+  with_items:
+    - { src: 'ceph.client.admin.keyring', dest: '/etc/ceph' }
+    - { src: 'ceph.keyring', dest: '/var/lib/ceph/bootstrap-osd' }
+
+- name: "Generate mon Key File"
+  shell: >
+    rm -f /tmp/monmap /tmp/ceph.mon.keyring &&
+    ceph-authtool --create-keyring /tmp/ceph.mon.keyring --gen-key -n mon. --cap mon 'allow *' &&
+    ceph-authtool /tmp/ceph.mon.keyring --import-keyring /etc/ceph/ceph.client.admin.keyring &&
+    ceph-authtool /tmp/ceph.mon.keyring --import-keyring /var/lib/ceph/bootstrap-osd/ceph.keyring &&
+    monmaptool --create --add {{ ceph_node_id }} {{ hostvars['h-ceph-node01']['ansible_ssh_host'] }} --fsid ee741368-4233-4cbc-8607-5d36ab314dab /tmp/monmap &&
+    chown ceph:ceph /tmp/monmap /tmp/ceph.mon.keyring  
+
+- name: "Init mon"
+  shell: sudo -u ceph ceph-mon --mkfs -i {{ ceph_node_id }} --monmap /tmp/monmap --keyring /tmp/ceph.mon.keyring
+
+- name: "Start mon"
+  systemd:
+    name: "ceph-mon@{{ ceph_node_id }}"
+    state: started
+    daemon_reload: yes
+    enabled: yes
+
+- name: "Wait for mon"
+  pause: seconds=30
+
+- name: "Init osd"
+  shell: >
+    parted  {{ ceph_disk_path }} -s "mklabel gpt" &&
+    ceph-volume lvm zap {{ ceph_disk_path }} &&
+    ceph-volume lvm create --data {{ ceph_disk_path }}
+
+- name: "Generate mgr Key File"
+  shell: sudo -u ceph ceph auth get-or-create mgr.{{ ceph_node_id }} mon 'allow profile mgr' osd 'allow *' mds 'allow *' -o /var/lib/ceph/mgr/ceph-{{ ceph_node_id }}/keyring 
+
+- name: "Start mgr"
+  systemd:
+    name: "ceph-mgr@{{ ceph_node_id }}"
+    state: started
+    daemon_reload: yes
+    enabled: yes
+
+- name: "Generate mds Key File"
+  shell: >
+    sudo -u ceph ceph-authtool --create-keyring /var/lib/ceph/mds/ceph-{{ ceph_node_id }}/keyring --gen-key -n mds.{{ ceph_node_id }} &&
+    sudo -u ceph ceph auth add mds.{{ ceph_node_id }} osd "allow rwx" mds "allow" mon "allow profile mds" -i /var/lib/ceph/mds/ceph-{{ ceph_node_id }}/keyring
+
+- name: "Start mds"
+  systemd:
+    name: "ceph-mds@{{ ceph_node_id }}"
+    state: started
+    daemon_reload: yes
+    enabled: yes
+
+- name: "Create Ceph Pool and cephFS"
+  shell: >
+    ceph osd pool create cephfs_data 128 &&
+    ceph osd pool create cephfs_metadata 128 &&
+    ceph fs new cephfs cephfs_metadata cephfs_data
+
+- name: "Remove Temp Key File"
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - /tmp/monmap
+    - /tmp/ceph.mon.keyring
+

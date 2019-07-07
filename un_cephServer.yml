@@ -1,0 +1,72 @@
+- hosts: g-ceph-server
+  tasks:
+    - name: "Stop Ceph"
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+      with_items:
+        - "ceph-osd@0"
+        - "ceph-mon@{{ ceph_node_id }}"
+        - "ceph-mgr@{{ ceph_node_id }}"
+        - "ceph-mds@{{ ceph_node_id }}"
+      ignore_errors: true
+
+    - name: "Remove Ceph RPM"
+      yum:
+        name: "{{ item }}"
+        state: absent
+      with_items:
+        - ceph
+        - ceph-base
+        - ceph-common
+        - ceph-mon
+        - ceph-osd
+        - ceph-mgr
+        - ceph-mds
+      ignore_errors: true
+
+    - name: "Remove Ceph LVM"
+      shell: lvremove -f $(lvdisplay | grep "/dev/ceph" | awk '{print $3}') 
+      ignore_errors: true
+
+    - name: "Umount Ceph osd"
+      shell: umount /var/lib/ceph/osd/ceph-?
+      ignore_errors: true
+
+    - name: "Remove Ceph Config File" 
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "/etc/ceph"
+        - "/var/log/ceph"
+        - "/var/lib/ceph"
+      ignore_errors: true
+
+    - name: "Reboot System"
+      command: "/usr/sbin/shutdown -r +1"
+      async: 0
+      poll: 0
+      ignore_errors: true
+
+    - name: "Wait for 30s"
+      pause: seconds=30    
+     
+    - name: "Wait for Restart"
+      shell: "echo > /dev/tcp/{{ ansible_ssh_host }}/22"
+      args: 
+        executable: /bin/bash
+      register: result
+      until: result.rc == 0
+      retries: 30
+      delay: 10
+      delegate_to: localhost
+
+    - name: "Remove Ceph Data File"
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /var/lib/ceph
+      ignore_errors: true
+

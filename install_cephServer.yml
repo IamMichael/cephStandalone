@@ -1,0 +1,4 @@
+- hosts: g-ceph-server
+  roles:
+    - ceph-server
+
